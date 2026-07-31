@@ -1,0 +1,173 @@
+name: tool-permission-enforcer
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: permission_enforcer
+      POSTGRES_USER: permission
+      POSTGRES_PASSWORD: permission
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U permission -d permission_enforcer"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - permission-network
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - permission-network
+
+  database-migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+    command: ["sh", "-c", "alembic upgrade head && python -m scripts.seed_phase_1"]
+    environment:
+      PROXY_APP_ENV: local
+      PROXY_DATABASE_URL: postgresql+psycopg://permission:permission@postgres:5432/permission_enforcer
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - permission-network
+
+  sample-crm:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.crm
+    environment:
+      CRM_APP_ENV: local
+      CRM_LOG_LEVEL: INFO
+      CRM_HOST: 0.0.0.0
+      CRM_PORT: 8001
+      CRM_DATABASE_URL: postgresql+psycopg://permission:permission@postgres:5432/permission_enforcer
+      CRM_INTERNAL_API_KEY: local-development-only-change-me
+    ports:
+      - "8001:8001"
+    depends_on:
+      database-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8001/health/ready')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - permission-network
+
+  permission-proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+    environment:
+      PROXY_APP_ENV: local
+      PROXY_LOG_LEVEL: INFO
+      PROXY_HOST: 0.0.0.0
+      PROXY_PORT: 8000
+      PROXY_DATABASE_URL: postgresql+psycopg://permission:permission@postgres:5432/permission_enforcer
+      PROXY_REDIS_URL: redis://redis:6379/0
+      PROXY_CRM_BASE_URL: http://sample-crm:8001
+      PROXY_CRM_INTERNAL_API_KEY: local-development-only-change-me
+      PROXY_UPSTREAM_TIMEOUT_SECONDS: "5"
+      PROXY_OIDC_ISSUER: http://localhost:8081/dev-issuer
+      PROXY_OIDC_AUDIENCE: tool-permission-enforcer
+      PROXY_DEV_AUTH_ENABLED: "true"
+      PROXY_DEV_JWT_SECRET: local-development-access-token-secret-change-me
+      PROXY_SESSION_TOKEN_ISSUER: tool-permission-enforcer
+      PROXY_SESSION_TOKEN_AUDIENCE: agent-session
+      PROXY_SESSION_SIGNING_SECRET: local-development-session-secret-change-me
+      PROXY_SESSION_TOKEN_TTL_SECONDS: "1800"
+    ports:
+      - "8000:8000"
+    depends_on:
+      database-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sample-crm:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - permission-network
+
+  reference-agent:
+    profiles: ["agent"]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    environment:
+      AGENT_APP_ENV: local
+      AGENT_LOG_LEVEL: INFO
+      AGENT_HOST: 0.0.0.0
+      AGENT_PORT: 8002
+      AGENT_PROXY_BASE_URL: http://permission-proxy:8000
+      AGENT_LLM_PROVIDER: disabled
+    ports:
+      - "8002:8002"
+    depends_on:
+      permission-proxy:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8002/health/ready')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    networks:
+      - permission-network
+
+networks:
+  permission-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:

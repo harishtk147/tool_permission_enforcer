@@ -1,0 +1,92 @@
+The local prototype is complete through Phase 5. Phases 6–9 remain deferred.
+
+Implemented:
+
+- Phase 3: strict manifest validation and deterministic default-deny policy engine.
+- Phase 4: functional protected CRM, proxy forwarding, timeouts, internal credentials, and idempotency.
+- Phase 5: sanitized append-only audit events, query APIs, hash chaining, and tamper detection.
+
+Verification passed:
+
+- 34 tests.
+- 89.72% coverage.
+- Ruff and strict Mypy passed.
+- All three Alembic migrations passed with no schema drift.
+- Separate CRM and proxy HTTP processes successfully completed the acceptance demonstration.
+- Docker runtime was not tested because Docker is unavailable in this environment.
+
+## Local verification without Docker
+
+Your older Phase 2 processes are currently using ports 8000 and 8001. Stop them with `Ctrl+C` before continuing.
+
+### Terminal 1 — Prepare and start CRM
+
+```powershell
+cd "C:\Users\arua\OneDrive - Cisco\Documents\Harish\tool-permission-enforcer"
+
+uv sync --frozen
+
+$env:PROXY_DATABASE_URL = "sqlite+pysqlite:///./local-prototype.db"
+uv run alembic upgrade head
+uv run python -m scripts.seed_phase_1
+
+$env:CRM_DATABASE_URL = "sqlite+pysqlite:///./local-prototype.db"
+$env:CRM_INTERNAL_API_KEY = "local-development-only-change-me"
+
+uv run uvicorn services.sample_crm.main:app --host 127.0.0.1 --port 8001
+```
+
+Leave this terminal running.
+
+### Terminal 2 — Start the permission proxy
+
+```powershell
+cd "C:\Users\arua\OneDrive - Cisco\Documents\Harish\tool-permission-enforcer"
+
+$env:PROXY_DATABASE_URL = "sqlite+pysqlite:///./local-prototype.db"
+$env:PROXY_CRM_BASE_URL = "http://127.0.0.1:8001"
+$env:PROXY_CRM_INTERNAL_API_KEY = "local-development-only-change-me"
+$env:PROXY_DEV_AUTH_ENABLED = "true"
+
+uv run uvicorn services.permission_proxy.main:app --host 127.0.0.1 --port 8000
+```
+
+Leave this terminal running.
+
+### Terminal 3 — Run the complete demonstration
+
+```powershell
+cd "C:\Users\arua\OneDrive - Cisco\Documents\Harish\tool-permission-enforcer"
+
+$env:PROXY_DATABASE_URL = "sqlite+pysqlite:///./local-prototype.db"
+$env:PROXY_CRM_BASE_URL = "http://127.0.0.1:8001"
+$env:PROXY_CRM_INTERNAL_API_KEY = "local-development-only-change-me"
+
+uv run python -m scripts.run_local_demo
+```
+
+Expected results:
+
+| Test | Expected result |
+|---|---|
+| Read session customer `customer_1001` | HTTP 200, `ALLOWED` |
+| Write customer | HTTP 403, `OPERATION_NOT_ALLOWED` |
+| Read `customer_1002` | HTTP 403, `DATA_SCOPE_VIOLATION` |
+| Delete customer | HTTP 403, `OPERATION_NOT_ALLOWED` |
+| Repeat idempotency key | HTTP 409, `DUPLICATE_REQUEST` |
+| Audit integrity | `valid: true` |
+
+Interactive APIs:
+
+- Proxy: [http://localhost:8000/docs](http://localhost:8000/docs)
+- CRM: [http://localhost:8001/docs](http://localhost:8001/docs)
+
+## Automated Phase 0–5 gate
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify_phase_5.ps1
+```
+
+The complete walkthrough, including Docker instructions and troubleshooting, is in the [Phase 5 local prototype runbook](<C:/Users/arua/OneDrive - Cisco/Documents/Harish/tool-permission-enforcer/docs/runbooks/phase-5-local-prototype.md>).
+
+There are now **4 deferred phases remaining: Phases 6, 7, 8, and 9**.

@@ -1,0 +1,161 @@
+Yes. Code changes are done. After installing `AWS CLI`, `Docker Desktop`, and `Terraform`, the main remaining step is to deploy to your personal AWS account.
+
+Here “push to AWS” means:
+
+1. Terraform creates AWS infrastructure.
+2. Docker builds the app image locally.
+3. The image is pushed to AWS ECR.
+4. ECS Fargate runs the app.
+5. The app becomes available through an AWS Load Balancer URL.
+
+The deployment script already does this:
+
+```powershell
+Set-Location "C:\Users\arua\OneDrive - Cisco\Documents\Harish\tool-permission-enforcer"
+
+$publicIp = (Invoke-RestMethod "https://checkip.amazonaws.com").Trim()
+
+.\scripts\deploy_aws_demo.ps1 `
+  -Region "ap-south-1" `
+  -AllowedIngressCidr "$publicIp/32"
+```
+
+**Before Deploying**
+Install tools:
+
+```powershell
+winget install --id Amazon.AWSCLI
+winget install --id Docker.DockerDesktop
+winget install --id Hashicorp.Terraform
+```
+
+Restart PowerShell, start Docker Desktop, then verify:
+
+```powershell
+aws --version
+docker version
+terraform version
+uv --version
+```
+
+**How To Login To AWS CLI**
+For the fastest interview/demo setup, use an IAM user access key in your personal AWS account.
+
+In AWS Console:
+
+1. Login to your personal AWS account.
+2. Go to `IAM`.
+3. Go to `Users`.
+4. Create a new user, for example `permission-enforcer-demo-cli`.
+5. For a short-lived demo, attach `AdministratorAccess`.
+6. Open the user.
+7. Go to `Security credentials`.
+8. Under `Access keys`, choose `Create access key`.
+9. Select `Command Line Interface (CLI)`.
+10. Download or view the access key once.
+
+Then configure locally:
+
+```powershell
+aws configure --profile personal
+```
+
+Enter:
+
+```text
+AWS Access Key ID: <from AWS console>
+AWS Secret Access Key: <from AWS console>
+Default region name: ap-south-1
+Default output format: json
+```
+
+Then set the profile:
+
+```powershell
+$env:AWS_PROFILE = "personal"
+aws sts get-caller-identity
+```
+
+Make sure the returned account ID is your personal AWS account.
+
+Do not paste the access key into chat, code, `.env`, GitHub, or any document.
+
+AWS officially recommends avoiding root account credentials and using IAM credentials for CLI access. Their CLI setup and IAM access key docs are here:
+
+- [AWS CLI setup](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-quickstart.html)
+- [IAM access keys](https://docs.aws.amazon.com/IAM/latest/UserGuide/id_credentials_access-keys.html)
+- [AWS CLI SSO alternative](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html)
+
+**How To Verify After Deploying**
+The script should print:
+
+```text
+Application URL: http://...
+API docs: http://.../docs
+```
+
+Then manually verify:
+
+```powershell
+Set-Location "C:\Users\arua\OneDrive - Cisco\Documents\Harish\tool-permission-enforcer\infra\terraform"
+
+$applicationUrl = terraform output -raw application_url
+
+Invoke-RestMethod "$applicationUrl/health/live"
+Invoke-RestMethod "$applicationUrl/health/ready"
+Start-Process "$applicationUrl/docs"
+```
+
+Expected readiness result should show the app is ready, config is ok, and database is ok.
+
+Also check ECS and logs:
+
+```powershell
+$cluster = terraform output -raw ecs_cluster_name
+$service = terraform output -raw ecs_service_name
+
+aws ecs describe-services `
+  --region "ap-south-1" `
+  --cluster $cluster `
+  --services $service
+
+aws logs tail "/ecs/permission-enforcer" `
+  --region "ap-south-1" `
+  --since 10m
+```
+
+The deployment script also runs the remote demo automatically unless you pass `-SkipDemo`. The successful demo proves:
+
+- trusted session creation works;
+- valid customer read is allowed;
+- write/delete are blocked;
+- cross-customer access is blocked;
+- duplicate idempotency is blocked;
+- audit-chain integrity is valid.
+
+**Other Steps After Deploying**
+After deployment, do these for interview readiness:
+
+1. Open `$applicationUrl/docs` and confirm Swagger UI loads.
+2. Take note of the `Application URL`.
+3. Run the health checks.
+4. Run or confirm the remote demo output.
+5. Check CloudWatch logs once.
+6. Be ready to explain the architecture: ALB -> ECS Fargate -> RDS PostgreSQL.
+7. After the interview/demo, destroy AWS resources to avoid cost.
+
+Destroy command:
+
+```powershell
+Set-Location "C:\Users\arua\OneDrive - Cisco\Documents\Harish\tool-permission-enforcer\infra\terraform"
+
+$env:AWS_PROFILE = "personal"
+$env:TF_VAR_demo_jwt_secret = "destroy-only-placeholder-secret-32chars"
+
+terraform destroy
+
+Remove-Item Env:\TF_VAR_demo_jwt_secret
+terraform state list
+```
+
+The full AWS runbook is here: [aws-ecs-demo-deployment.md](<C:/Users/arua/OneDrive - Cisco/Documents/Harish/tool-permission-enforcer/docs/runbooks/aws-ecs-demo-deployment.md>).

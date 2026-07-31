@@ -1,0 +1,11 @@
+aws_region           = "ap-south-1"
+project_name         = "permission-enforcer"
+image_tag            = "replace-with-a-unique-tag"
+create_service       = false
+allowed_ingress_cidr = "YOUR.PUBLIC.IP.ADDRESS/32"
+
+# Keep this empty for an HTTP interview demo. Add an ACM certificate ARN for HTTPS.
+certificate_arn = ""
+domain_name     = ""
+
+# Do not put demo_jwt_secret in this file. Set TF_VAR_demo_jwt_secret in your shell.
