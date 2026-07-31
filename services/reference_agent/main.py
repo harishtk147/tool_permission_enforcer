@@ -1,4 +1,5 @@
 import logging
+from .api import router as ai_router
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -36,6 +37,7 @@ def create_app(settings: ReferenceAgentSettings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.state.settings = config
+    application.include_router(ai_router)
 
     @application.get("/", response_model=ServiceInfo, tags=["service"])
     async def service_info() -> ServiceInfo:
